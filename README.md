@@ -11,6 +11,7 @@ python ipo_fetch.py -s filed         # 이번 달 상장 신청 건 (날짜 없�
 python ipo_fetch.py --no-spac        # SPAC 빼기
 python ipo_fetch.py --csv ipo.csv    # CSV로 저장
 python ipo_fetch.py --telegram       # 텔레그램으로도 보내기
+python ipo_fetch.py --telegram --new-only   # 지난번에 보내지 않은 새 종목만 보내기
 ```
 
 `-s` 로 고를 수 있는 구역: `priced`(상장 완료), `upcoming`(상장 예정), `filed`(신청 접수), `withdrawn`(철회).
@@ -28,6 +29,8 @@ python ipo_fetch.py --telegram       # 텔레그램으로도 보내기
 
 날짜가 잡혀 올라오는 것은 보통 상장 1~2주 전부터다. 그보다 먼 후보는 `-s filed` 로 본다.
 
+상장 예정 중 날짜가 오늘보다 이른 건은 뺀다. 공모가가 안 정해졌거나 나스닥 갱신이 늦어 남아 있는 건이다.
+
 ## 텔레그램
 
 토큰과 대화방 번호는 코드에 넣지 않고 환경변수로 준다.
@@ -39,13 +42,17 @@ setx TELEGRAM_CHAT_ID   "대화방 번호"
 
 `setx` 로 넣은 뒤에는 새 창을 열어야 적용된다.
 
+`--new-only` 를 주면 이미 보낸 종목은 빼고 보낸다. 보낸 종목은 `sent_ipos.json` 에 적고, 180일 지난 기록은 지운다.
+기록은 텔레그램 보내기가 성공했을 때만 남긴다. 새 종목이 없으면 "새 종목 없음" 한 줄을 보낸다.
+처음 돌리면 기록이 비어 있어 지금 목록이 모두 새 종목으로 간다.
+
 ## 매주 자동으로 보내기 (윈도우 작업 스케줄러)
 
 PowerShell에서 한 번 등록한다. 아래는 매주 일요일 오후 2시에 보내는 예다.
 
 ```powershell
 $py = python -c "import sys; print(sys.executable)"
-$a = New-ScheduledTaskAction -Execute $py -Argument '"C:\경로\ipo_fetch.py" --telegram' -WorkingDirectory 'C:\경로'
+$a = New-ScheduledTaskAction -Execute $py -Argument '"C:\경로\ipo_fetch.py" --telegram --new-only' -WorkingDirectory 'C:\경로'
 $t = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 14:00
 $s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 Register-ScheduledTask -TaskName 'IPO 주간 텔레그램' -Action $a -Trigger $t -Settings $s
@@ -53,6 +60,12 @@ Register-ScheduledTask -TaskName 'IPO 주간 텔레그램' -Action $a -Trigger $
 
 `-StartWhenAvailable` 을 넣으면 그 시각에 PC가 꺼져 있었어도 켜진 뒤 한 번 돈다.
 지우려면 `Unregister-ScheduledTask -TaskName 'IPO 주간 텔레그램'`.
+
+## 시험
+
+```
+python -m unittest
+```
 
 ## 라이선스
 

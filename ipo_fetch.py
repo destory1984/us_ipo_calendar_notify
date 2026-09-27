@@ -4,6 +4,7 @@ python ipo_fetch.py                  # 상장 예정 (앞으로 잡힌 것만)
 python ipo_fetch.py -s filed         # 이번 달 신청 접수 건 (날짜 없는 상장 후보)
 python ipo_fetch.py --csv ipo.csv    # CSV로 저장
 python ipo_fetch.py --telegram       # 텔레그램으로도 보내기
+python ipo_fetch.py --telegram --new-only   # 지난번에 보내지 않은 새 종목만 보내기
 
 구역(-s): priced(상장 완료) upcoming(상장 예정) filed(신청 접수) withdrawn(철회)
 나스닥 캘린더지만 NYSE 상장 건도 들어 있다.
@@ -79,6 +80,48 @@ def date_key(r):
         return datetime.datetime.min
 
 
+def drop_past(rows, today):
+    # 날짜가 지났는데 상장 예정에 남은 건(가격 미정, 나스닥 갱신 지연)을 뺀다. 날짜를 못 읽으면 남긴다
+    return [r for r in rows
+            if r['section'] != 'upcoming' or date_key(r) == datetime.datetime.min or date_key(r).date() >= today]
+
+
+SENT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sent_ipos.json')
+SENT_KEEP_DAYS = 180
+
+
+def row_key(r):
+    # 종목 코드는 비거나 바뀔 수 있어 나스닥 dealID를 먼저 쓴다
+    return r['deal_id'] or f"{r['section']}|{r['symbol']}|{r['company']}"
+
+
+def new_rows(rows, sent):
+    return [r for r in rows if row_key(r) not in sent]
+
+
+def mark_sent(sent, rows, today):
+    for r in rows:
+        sent.setdefault(row_key(r), today.isoformat())
+
+
+def prune(sent, today, days=SENT_KEEP_DAYS):
+    cut = (today - datetime.timedelta(days=days)).isoformat()
+    return {k: v for k, v in sent.items() if v >= cut}
+
+
+def load_sent(path):
+    try:
+        with open(path, encoding='utf-8') as fp:
+            return json.load(fp)
+    except FileNotFoundError:
+        return {}
+
+
+def save_sent(path, sent):
+    with open(path, 'w', encoding='utf-8') as fp:
+        json.dump(sent, fp, ensure_ascii=False, indent=1, sort_keys=True)
+
+
 def main():
     p = argparse.ArgumentParser(description='미국 IPO 목록 (나스닥 캘린더)')
     p.add_argument('-m', '--months', type=int, default=1, help='이번 달부터 거슬러 몇 달 (기본 1)')
@@ -88,6 +131,8 @@ def main():
     p.add_argument('--no-industry', action='store_true', help='업종 조회 건너뛰기 (건마다 요청 2번이라 목록이 길면 느리다)')
     p.add_argument('--csv', help='CSV 파일로 저장')
     p.add_argument('--telegram', action='store_true', help='결과를 텔레그램으로 보내기 (환경변수 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)')
+    p.add_argument('--new-only', action='store_true',
+                   help='텔레그램으로 이미 보낸 종목 빼기 (기록: sent_ipos.json, 텔레그램 발송 성공 때만 남긴다)')
     a = p.parse_args()
 
     seen, rows = set(), []
@@ -108,6 +153,11 @@ def main():
                 seen.add(key)
                 rows.append(r)
 
+    today = datetime.date.today()
+    rows = drop_past(rows, today)
+    if a.new_only:
+        sent = prune(load_sent(SENT_PATH), today)
+        rows = new_rows(rows, sent)
     rows.sort(key=date_key, reverse=True)
 
     if not a.no_industry:
@@ -130,8 +180,12 @@ def main():
     print(f'\n총 {len(rows)}건')
 
     if a.telegram:
-        send_telegram(telegram_text(rows, a.sections))
+        send_telegram(telegram_text(rows, a.sections, a.new_only))
         print('텔레그램 보냄')
+        # 보내기에 성공했을 때만 기록한다. 손으로 돌려 본 결과가 일요일 알림을 가로채지 않게 한다
+        if a.new_only:
+            mark_sent(sent, rows, today)
+            save_sent(SENT_PATH, sent)
 
 
 SECTION_KO = {'priced': '상장 완료', 'upcoming': '상장 예정', 'filed': '신청 접수', 'withdrawn': '철회'}
@@ -145,10 +199,11 @@ def short_amount(s):
     return f'{v / 1e8:.1f}억 달러' if v >= 1e8 else f'{v / 1e6:.0f}백만 달러'
 
 
-def telegram_text(rows, sections):
-    head = f"<b>미국 IPO {'·'.join(SECTION_KO[s] for s in sections)}</b> ({datetime.date.today():%m/%d} 기준, {len(rows)}건)"
+def telegram_text(rows, sections, new_only=False):
+    title = '·'.join(SECTION_KO[s] for s in sections) + (' 새 종목' if new_only else '')
+    head = f"<b>미국 IPO {title}</b> ({datetime.date.today():%m/%d} 기준, {len(rows)}건)"
     if not rows:
-        return head + '\n\n잡혀 있는 건이 없습니다.'
+        return head + ('\n\n지난번 이후 새 종목 없음.' if new_only else '\n\n잡혀 있는 건이 없습니다.')
     lines = [head]
     for r in rows:
         tag = '' if len(sections) == 1 else f" [{SECTION_KO[r['section']]}]"
