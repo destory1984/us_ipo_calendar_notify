@@ -53,3 +53,7 @@ Register-ScheduledTask -TaskName 'IPO 주간 텔레그램' -Action $a -Trigger $
 
 `-StartWhenAvailable` 을 넣으면 그 시각에 PC가 꺼져 있었어도 켜진 뒤 한 번 돈다.
 지우려면 `Unregister-ScheduledTask -TaskName 'IPO 주간 텔레그램'`.
+
+## 라이선스
+
+[MIT](LICENSE)
